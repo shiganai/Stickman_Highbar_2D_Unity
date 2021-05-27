@@ -6,18 +6,21 @@ public class freefall : MonoBehaviour
 {
     private float v;
     private GameObject human;
+    private GameObject body;
 
     // Start is called before the first frame update
     void Start()
     {
         human = gameObject;
+        body = GameObject.Find("Body");
         v = 0;
     }
 
     // Update is called once per frame
-    void Update()
+    void FixedUpdate()
     {
-        v += Time.time * Mathf.Pow(10, -5);
-        human.transform.Translate(0, v, 0);
+        v += Time.fixedDeltaTime * Mathf.Pow(10, -1.5f);
+        //human.transform.Translate(0, v, 0);
+        human.transform.Rotate(0, 0, Time.fixedDeltaTime * 3 * Mathf.Pow(10, 1f));
     }
 }
