@@ -26,7 +26,7 @@ public class button_Control_Main : BaseButtonController
     private void TakeOff()
     {
         Debug.Log("TakeOff Click");
-        freefall_Cs.status = "Inair";
+        freefall_Cs.Set_Status_Inair();
     }
 
     private void Button2Click()
