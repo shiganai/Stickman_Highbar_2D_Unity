@@ -17,6 +17,10 @@ public class button_Control_Main : BaseButtonController
         {
             this.TakeOff();
         }
+        else if ("Reset".Equals(objectName))
+        {
+            this.Reset();
+        }
         else
         {
             throw new System.Exception("Not implemented!!");
@@ -27,6 +31,13 @@ public class button_Control_Main : BaseButtonController
     {
         Debug.Log("TakeOff Click");
         freefall_Cs.Set_Status_Inair();
+    }
+
+    private void Reset()
+    {
+        Debug.Log("Reset Click");
+        freefall_Cs.Initialized();
+        ;
     }
 
     private void Button2Click()

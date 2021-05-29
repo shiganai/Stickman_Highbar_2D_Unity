@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.UI;
 using System.Runtime.InteropServices;
 
 public class freefall : MonoBehaviour
@@ -22,6 +23,8 @@ public class freefall : MonoBehaviour
     public float tau_Hip = 0;
     public float tau_Hip_Self = 0;
     private float tau_Hip_C = 1e3f;
+    public float tau_Hip_Max = 100;
+    private float tau_Hip_Straighten_Power = 2e2f;
 
     private float[] th_Hip_Lim = new float[] { -90 * Mathf.Deg2Rad, 150 * Mathf.Deg2Rad };
 
@@ -35,7 +38,7 @@ public class freefall : MonoBehaviour
     private float dth_Wrist = 0;
     private float dth_Hip = 0;
 
-    private float l_Wrist_Bar = 0.5f;
+    private float l_Wrist_Bar = 0f;
     private float dl_Wrist_Bar = 0;
 
     private string status_Onbar = "onbar";
@@ -43,13 +46,8 @@ public class freefall : MonoBehaviour
     private string status_Catch = "catch";
     private string status;
 
+    private Slider torque_Slider;
     private System.Diagnostics.Stopwatch sw;
-
-    static class DLL
-    {
-        //[DllImport("find_dd_Onbar 1", CallingConvention = CallingConvention.StdCall)]
-        //public static extern int add_function(float dth_Hip, float dth_Wrist, float g, float l_Body, float l_Leg, float l_Wrist_Bar, float m_Body, float m_Leg, float tau_Hip, float th_Hip, float th_Wrist);
-    }
 
     // Start is called before the first frame update
     void Start()
@@ -58,11 +56,15 @@ public class freefall : MonoBehaviour
         sw = new System.Diagnostics.Stopwatch();
         sw.Start();
 
+        torque_Slider = GameObject.Find("Torque_Slider").GetComponent<Slider>();
+
         human = GameObject.Find("Human");
         wrist = GameObject.Find("Wrist");
         body = GameObject.Find("Body");
         leg = GameObject.Find("Leg");
         hip = GameObject.Find("Hip");
+
+        Initialized();
 
         th_Wrist = wrist.transform.localRotation.eulerAngles.z * Mathf.Deg2Rad;
         th_Hip = hip.transform.localRotation.eulerAngles.z * Mathf.Deg2Rad;
@@ -80,100 +82,171 @@ public class freefall : MonoBehaviour
         sw.Stop();
     }
 
+    public void Initialized()
+    {
+        th_Wrist = 0;
+        dth_Wrist = 0;
+
+        th_Hip = 0;
+        dth_Hip = 0;
+
+        l_Wrist_Bar = 0;
+        dl_Wrist_Bar = 0;
+
+        x_Wrist = -l_Wrist_Bar * (-Mathf.Sin(th_Wrist));
+        y_Wrist = -l_Wrist_Bar * Mathf.Cos(th_Wrist);
+
+        status = status_Onbar;
+
+        wrist.transform.localRotation = Quaternion.Euler(new Vector3(0, 0, th_Wrist * Mathf.Rad2Deg));
+        hip.transform.localRotation = Quaternion.Euler(new Vector3(0, 0, th_Hip * Mathf.Rad2Deg));
+
+        wrist.transform.localPosition = new Vector3(x_Wrist, y_Wrist, 0);
+
+        torque_Slider.value = 0;
+
+        //GameObject.Find("Main Camera").transform.position = new Vector3(0,0,-10);
+    }
+
     // Update is called once per frame
     void FixedUpdate()
     {
-        tau_Hip = tau_Hip_Self;
-        if (th_Hip < th_Hip_Lim[0] && dth_Hip < 0)
-        {
-            tau_Hip += -tau_Hip_C * dth_Hip;
-        } else if (th_Hip > th_Hip_Lim[1] && dth_Hip > 0)
-        {
-            tau_Hip += -tau_Hip_C * dth_Hip;
-        }
+        th_Wrist += dth_Wrist * Time.fixedDeltaTime;
+        th_Hip += dth_Hip * Time.fixedDeltaTime;
 
-        if (status.Equals(status_Onbar) || status.Equals(status_Inair) || status.Equals(status_Catch))
+        float[] dds;
+
+        if (status.Equals(status_Onbar))
         {
-            th_Wrist += dth_Wrist * Time.fixedDeltaTime;
-            th_Hip += dth_Hip * Time.fixedDeltaTime;
+            float ddth_Hip_Target = -2 * tau_Hip_Straighten_Power * dth_Hip - tau_Hip_Straighten_Power * th_Hip;
+            float tau_Hip_To_Straighten = find_Tau_Hip_Onbar(ddth_Hip_Target);
 
-            float[] dds;
-
-            if (status.Equals(status_Onbar))
+            if (Mathf.Abs(tau_Hip_To_Straighten) > tau_Hip_Max)
             {
-                dds = find_Dd_Onbar();
-
-                dth_Wrist += dds[0] * Time.fixedDeltaTime;
-                dth_Hip += dds[1] * Time.fixedDeltaTime;
-
-                dx_Wrist = dth_Wrist * l_Wrist_Bar * (-Mathf.Cos(th_Wrist));
-                dy_Wrist = dth_Wrist * l_Wrist_Bar * (-Mathf.Sin(th_Wrist));
-
-                //wrist.transform.RotateAround(new Vector3(0, 0, 0), new Vector3(0, 0, 1), dth_Wrist * Time.fixedDeltaTime * Mathf.Rad2Deg);
-                //hip.transform.Rotate(0, 0, dth_Hip * Time.fixedDeltaTime * Mathf.Rad2Deg);
-
-                x_Wrist = -l_Wrist_Bar * (-Mathf.Sin(th_Wrist));
-                y_Wrist = -l_Wrist_Bar * Mathf.Cos(th_Wrist);
-
-                wrist.transform.Rotate(0, 0, dth_Wrist * Time.fixedDeltaTime * Mathf.Rad2Deg);
-                hip.transform.Rotate(0, 0, dth_Hip * Time.fixedDeltaTime * Mathf.Rad2Deg);
-
-                wrist.transform.position = new Vector3(x_Wrist, y_Wrist, 0);
+                tau_Hip_To_Straighten = Mathf.Sign(tau_Hip_To_Straighten) * tau_Hip_Max;
             }
-            else if (status.Equals(status_Inair))
+
+            if (tau_Hip_Self > 0)
             {
-                dds = find_Dd_Inair();
-                dx_Wrist += dds[2] * Time.fixedDeltaTime;
-                dy_Wrist += dds[3] * Time.fixedDeltaTime;
-
-                dth_Wrist += dds[0] * Time.fixedDeltaTime;
-                dth_Hip += dds[1] * Time.fixedDeltaTime;
-
-                wrist.transform.Rotate(0, 0, dth_Wrist * Time.fixedDeltaTime * Mathf.Rad2Deg);
-                hip.transform.Rotate(0, 0, dth_Hip * Time.fixedDeltaTime * Mathf.Rad2Deg);
-
-                Vector3 moving_Vec = wrist.transform.InverseTransformDirection(dx_Wrist, dy_Wrist, 0) * Time.fixedDeltaTime;
-                wrist.transform.Translate(moving_Vec);
-
-                //human.transform.Translate(dx_Wrist * Time.fixedDeltaTime, dy_Wrist * Time.fixedDeltaTime, 0);
-            }
-            else if (status.Equals(status_Catch))
-            {
-                dds = find_Dd_Catch();
-                float f_Wrist_Bar = dds[3];
-                if (Mathf.Sign(f_Wrist_Bar) == Mathf.Sign(dl_Wrist_Bar))
-                {
-                    myu *= -1;
-                    dds = find_Dd_Catch();
-                }
-
-                float ddl_Wrist_Bar = dds[2];
-                dl_Wrist_Bar += ddl_Wrist_Bar * Time.fixedDeltaTime;
-                l_Wrist_Bar += dl_Wrist_Bar * Time.fixedDeltaTime;
-
-                x_Wrist = -l_Wrist_Bar * (-Mathf.Sin(th_Wrist));
-                y_Wrist = -l_Wrist_Bar * Mathf.Cos(th_Wrist);
-
-                dx_Wrist = l_Wrist_Bar * dth_Wrist * Mathf.Cos(th_Wrist);
-                dy_Wrist = -l_Wrist_Bar * dth_Wrist * (-Mathf.Sin(th_Wrist));
-
-                dth_Wrist += dds[0] * Time.fixedDeltaTime;
-                dth_Hip += dds[1] * Time.fixedDeltaTime;
-
-                wrist.transform.Rotate(0, 0, dth_Wrist * Time.fixedDeltaTime * Mathf.Rad2Deg);
-                hip.transform.Rotate(0, 0, dth_Hip * Time.fixedDeltaTime * Mathf.Rad2Deg);
-
-                //Vector3 moving_Vec = wrist.transform.InverseTransformDirection(dx_Wrist, dy_Wrist, 0) * Time.fixedDeltaTime;
-                //wrist.transform.Translate(moving_Vec);
-
-                //Vector3 position_Vec = wrist.transform.InverseTransformPoint(x_Wrist, y_Wrist, 0);
-                //wrist.transform.localPosition = new Vector3(x_Wrist, y_Wrist, 0);
-                wrist.transform.position = new Vector3(x_Wrist, y_Wrist, 0);
+                tau_Hip = (tau_Hip_Max - tau_Hip_To_Straighten) * tau_Hip_Self + tau_Hip_To_Straighten;
             }
             else
             {
-                dds = new float[] { 0, 0 };
+                tau_Hip = (-tau_Hip_Max - tau_Hip_To_Straighten) * (-tau_Hip_Self) + tau_Hip_To_Straighten;
             }
+
+            if (th_Hip < th_Hip_Lim[0] && dth_Hip < 0)
+            {
+                tau_Hip += -tau_Hip_C * dth_Hip;
+            }
+            else if (th_Hip > th_Hip_Lim[1] && dth_Hip > 0)
+            {
+                tau_Hip += -tau_Hip_C * dth_Hip;
+            }
+
+            dds = find_Dd_Onbar();
+
+            dth_Wrist += dds[0] * Time.fixedDeltaTime;
+            dth_Hip += dds[1] * Time.fixedDeltaTime;
+
+            dx_Wrist = dth_Wrist * l_Wrist_Bar * (-Mathf.Cos(th_Wrist));
+            dy_Wrist = dth_Wrist * l_Wrist_Bar * (-Mathf.Sin(th_Wrist));
+
+            x_Wrist = -l_Wrist_Bar * (-Mathf.Sin(th_Wrist));
+            y_Wrist = -l_Wrist_Bar * Mathf.Cos(th_Wrist);
+
+            wrist.transform.Rotate(0, 0, dth_Wrist * Time.fixedDeltaTime * Mathf.Rad2Deg);
+            hip.transform.Rotate(0, 0, dth_Hip * Time.fixedDeltaTime * Mathf.Rad2Deg);
+
+            wrist.transform.position = new Vector3(x_Wrist, y_Wrist, 0);
+        }
+        else if (status.Equals(status_Inair))
+        {
+            float ddth_Hip_Target = -2 * tau_Hip_Straighten_Power * dth_Hip - tau_Hip_Straighten_Power * th_Hip;
+            float tau_Hip_To_Straighten = find_Tau_Hip_Onbar(ddth_Hip_Target);
+
+            if (Mathf.Abs(tau_Hip_To_Straighten) > tau_Hip_Max)
+            {
+                tau_Hip_To_Straighten = Mathf.Sign(tau_Hip_To_Straighten) * tau_Hip_Max;
+            }
+
+            if (tau_Hip_Self > 0)
+            {
+                tau_Hip = (tau_Hip_Max - tau_Hip_To_Straighten) * tau_Hip_Self + tau_Hip_To_Straighten;
+            }
+            else
+            {
+                tau_Hip = (-tau_Hip_Max - tau_Hip_To_Straighten) * (-tau_Hip_Self) + tau_Hip_To_Straighten;
+            }
+
+            if (th_Hip < th_Hip_Lim[0] && dth_Hip < 0)
+            {
+                tau_Hip += -tau_Hip_C * dth_Hip;
+            }
+            else if (th_Hip > th_Hip_Lim[1] && dth_Hip > 0)
+            {
+                tau_Hip += -tau_Hip_C * dth_Hip;
+            }
+
+            dds = find_Dd_Inair();
+            dx_Wrist += dds[2] * Time.fixedDeltaTime;
+            dy_Wrist += dds[3] * Time.fixedDeltaTime;
+
+            dth_Wrist += dds[0] * Time.fixedDeltaTime;
+            dth_Hip += dds[1] * Time.fixedDeltaTime;
+
+            wrist.transform.Rotate(0, 0, dth_Wrist * Time.fixedDeltaTime * Mathf.Rad2Deg);
+            hip.transform.Rotate(0, 0, dth_Hip * Time.fixedDeltaTime * Mathf.Rad2Deg);
+
+            Vector3 moving_Vec = wrist.transform.InverseTransformDirection(dx_Wrist, dy_Wrist, 0) * Time.fixedDeltaTime;
+            wrist.transform.Translate(moving_Vec);
+        }
+        else if (status.Equals(status_Catch))
+        {
+            tau_Hip = tau_Hip_Self * tau_Hip_Max;
+            if (th_Hip < th_Hip_Lim[0] && dth_Hip < 0)
+            {
+                tau_Hip += -tau_Hip_C * dth_Hip;
+            }
+            else if (th_Hip > th_Hip_Lim[1] && dth_Hip > 0)
+            {
+                tau_Hip += -tau_Hip_C * dth_Hip;
+            }
+
+            dds = find_Dd_Catch();
+            float f_Wrist_Bar = dds[3];
+            if (Mathf.Sign(f_Wrist_Bar) == Mathf.Sign(dl_Wrist_Bar))
+            {
+                myu *= -1;
+                dds = find_Dd_Catch();
+            }
+
+            float ddl_Wrist_Bar = dds[2];
+            dl_Wrist_Bar += ddl_Wrist_Bar * Time.fixedDeltaTime;
+            l_Wrist_Bar += dl_Wrist_Bar * Time.fixedDeltaTime;
+
+            x_Wrist = -l_Wrist_Bar * (-Mathf.Sin(th_Wrist));
+            y_Wrist = -l_Wrist_Bar * Mathf.Cos(th_Wrist);
+
+            dx_Wrist = l_Wrist_Bar * dth_Wrist * Mathf.Cos(th_Wrist);
+            dy_Wrist = -l_Wrist_Bar * dth_Wrist * (-Mathf.Sin(th_Wrist));
+
+            dth_Wrist += dds[0] * Time.fixedDeltaTime;
+            dth_Hip += dds[1] * Time.fixedDeltaTime;
+
+            wrist.transform.Rotate(0, 0, dth_Wrist * Time.fixedDeltaTime * Mathf.Rad2Deg);
+            hip.transform.Rotate(0, 0, dth_Hip * Time.fixedDeltaTime * Mathf.Rad2Deg);
+
+            wrist.transform.position = new Vector3(x_Wrist, y_Wrist, 0);
+
+            if(l_Wrist_Bar > l_Body)
+            {
+                status = "failed";
+            }
+        }
+        else
+        {
+            dds = new float[] { 0, 0 };
         }
     }
 
@@ -838,5 +911,22 @@ public class freefall : MonoBehaviour
         //float I_F_Wrist_Bar = -(dl_Wrist_Bar_Before * (m_Body * t17 + t4 * t6 * 4.0f + t4 * t7 * 3.0f + t5 * t6 * 1.2e+1f + t5 * t7 * 3.0f - l_Body * l_Wrist_Bar * t6 * 1.2e+1f - l_Body * l_Wrist_Bar * t7 * 6.0f + m_Body * m_Leg * t4 * 1.3e+1f - l_Body * l_Wrist_Bar * m_Body * m_Leg * 2.7e+1f - m_Body * m_Leg * t4 * t10 * 6.0f + l_Body * l_Wrist_Bar * m_Body * m_Leg * t10 * 9.0f)) / (m_Body * t4 * 4.0f + m_Body * t5 * 1.2e+1f + m_Leg * t4 * 1.2e+1f + m_Leg * t5 * 1.2e+1f - l_Body * l_Wrist_Bar * m_Body * 1.2e+1f - l_Body * l_Wrist_Bar * m_Leg * 2.4e+1f - m_Leg * t4 * t10 * 9.0f - m_Leg * t5 * t10 * 9.0f + l_Body * l_Wrist_Bar * m_Leg * t10 * 1.8e+1f);
 
         return new float[] { dth_Wrist_After, dth_Hip_After };
+    }
+
+    float find_Tau_Hip_Onbar(float ddth_Hip)
+    {
+        float t2 = Mathf.Cos(th_Hip);
+        float t3 = Mathf.Sin(th_Hip);
+        float t4 = Mathf.Sin(th_Wrist);
+        float t5 = th_Hip + th_Wrist;
+        float t6 = Mathf.Pow(dth_Hip, 2f);
+        float t7 = Mathf.Pow(dth_Wrist, 2f);
+        float t8 = Mathf.Pow(l_Body, 2f);
+        float t9 = Mathf.Pow(l_Leg, 2f);
+        float t10 = Mathf.Pow(l_Wrist_Bar, 2f);
+        float t11 = Mathf.Sin(t5);
+        float tau_Hip_Onbar = (l_Leg * m_Leg * (ddth_Hip * l_Leg * 4.0f - g * t11 * 6.0f + l_Body * t3 * t7 * 6.0f - l_Wrist_Bar * t3 * t7 * 3.0f)) / 1.2e+1f - (l_Leg * l_Wrist_Bar * m_Leg * t3 * t7) / 4.0f - (l_Leg * m_Leg * (l_Leg * 2.0f + l_Body * t2 * 3.0f - l_Wrist_Bar * t2 * 3.0f) * (ddth_Hip * m_Leg * t9 * 2.0f - g * l_Body * m_Body * t4 * 3.0f - g * l_Body * m_Leg * t4 * 6.0f - g * l_Leg * m_Leg * t11 * 3.0f + g * l_Wrist_Bar * m_Body * t4 * 6.0f + g * l_Wrist_Bar * m_Leg * t4 * 6.0f + ddth_Hip * l_Body * l_Leg * m_Leg * t2 * 3.0f - ddth_Hip * l_Leg * l_Wrist_Bar * m_Leg * t2 * 3.0f - l_Body * l_Leg * m_Leg * t3 * t6 * 3.0f + l_Leg * l_Wrist_Bar * m_Leg * t3 * t6 * 3.0f - dth_Hip * dth_Wrist * l_Body * l_Leg * m_Leg * t3 * 6.0f + dth_Hip * dth_Wrist * l_Leg * l_Wrist_Bar * m_Leg * t3 * 6.0f)) / (m_Body * t8 * 1.2e+1f + m_Body * t10 * 3.6e+1f + m_Leg * t8 * 3.6e+1f + m_Leg * t9 * 1.2e+1f + m_Leg * t10 * 3.6e+1f - l_Body * l_Wrist_Bar * m_Body * 3.6e+1f - l_Body * l_Wrist_Bar * m_Leg * 7.2e+1f + l_Body * l_Leg * m_Leg * t2 * 3.6e+1f - l_Leg * l_Wrist_Bar * m_Leg * t2 * 3.6e+1f);
+
+        return tau_Hip_Onbar;
     }
 }
